@@ -20,6 +20,8 @@ namespace BroadcastStack
 
         private static bool _enabled;
         private static readonly Dictionary<string, Dictionary<Guid, Entry>> PlayerStacks = new();
+        private static readonly Dictionary<string, uint> PlayerGeneration = new();
+        private static uint _globalGeneration;
 
         internal static void Init() => _enabled = true;
 
@@ -27,15 +29,34 @@ namespace BroadcastStack
         {
             _enabled = false;
             PlayerStacks.Clear();
+            PlayerGeneration.Clear();
+            _globalGeneration++;
         }
 
         public static void ClearPlayer(Player player)
         {
-            if (player != null)
-                PlayerStacks.Remove(player.UserId);
+            if (player == null) return;
+            PlayerStacks.Remove(player.UserId);
+            // Bump generation so any pending expiry callbacks for this player become stale
+            PlayerGeneration[player.UserId] = PlayerGeneration.TryGetValue(player.UserId, out var g) ? g + 1 : 1;
+            // Visually clear the broadcast on the player's screen
+            if (_enabled && player.IsConnected) Refresh(player);
         }
 
-        public static void ClearAll() => PlayerStacks.Clear();
+        public static void ClearAll()
+        {
+            PlayerStacks.Clear();
+            // Bump global generation so all pending expiry callbacks become stale
+            _globalGeneration++;
+            // Visually clear broadcasts for all connected players
+            if (_enabled)
+            {
+                foreach (var p in Player.List)
+                {
+                    if (p != null && p.IsVerified && p.IsConnected) Refresh(p);
+                }
+            }
+        }
 
         public static void AddToAllPlayers(ushort duration, string message)
         {
@@ -64,11 +85,21 @@ namespace BroadcastStack
 
             Refresh(player);
 
+            // Capture the current generation so the callback can detect if a clear happened
+            var userId = player.UserId;
+            PlayerGeneration.TryGetValue(userId, out var gen);
+            var globalGen = _globalGeneration;
+
             Timing.CallDelayed(duration, () =>
             {
-                if (!PlayerStacks.TryGetValue(player.UserId, out var s)) return;
+                // If either the player or global generation changed, a clear happened
+                // since this entry was created — this callback is stale, bail out.
+                PlayerGeneration.TryGetValue(userId, out var currentGen);
+                if (currentGen != gen || _globalGeneration != globalGen) return;
+
+                if (!PlayerStacks.TryGetValue(userId, out var s)) return;
                 s.Remove(id);
-                if (s.Count == 0) PlayerStacks.Remove(player.UserId);
+                if (s.Count == 0) PlayerStacks.Remove(userId);
                 if (player.IsConnected) Refresh(player);
             });
         }
