@@ -37,18 +37,14 @@ namespace BroadcastStack
         {
             if (player == null) return;
             PlayerStacks.Remove(player.UserId);
-            // Bump generation so any pending expiry callbacks for this player become stale
             PlayerGeneration[player.UserId] = PlayerGeneration.TryGetValue(player.UserId, out var g) ? g + 1 : 1;
-            // Visually clear the broadcast on the player's screen
             if (_enabled && player.IsConnected) Refresh(player);
         }
 
         public static void ClearAll()
         {
             PlayerStacks.Clear();
-            // Bump global generation so all pending expiry callbacks become stale
             _globalGeneration++;
-            // Visually clear broadcasts for all connected players
             if (_enabled)
             {
                 foreach (var p in Player.List)
@@ -85,15 +81,12 @@ namespace BroadcastStack
 
             Refresh(player);
 
-            // Capture the current generation so the callback can detect if a clear happened
             var userId = player.UserId;
             PlayerGeneration.TryGetValue(userId, out var gen);
             var globalGen = _globalGeneration;
 
             Timing.CallDelayed(duration, () =>
             {
-                // If either the player or global generation changed, a clear happened
-                // since this entry was created — this callback is stale, bail out.
                 PlayerGeneration.TryGetValue(userId, out var currentGen);
                 if (currentGen != gen || _globalGeneration != globalGen) return;
 
